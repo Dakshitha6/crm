@@ -1,36 +1,98 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Swift CRM - Next.js Multi-tenant CRM Application
 
-## Getting Started
+A modern CRM system built with Next.js, Supabase, and Shadcn UI for multi-tenant organizations.
 
-First, run the development server:
+## Features
+
+- **Authentication System**: Email/password and Google OAuth authentication
+- **Multi-tenant Architecture**: Organizations with isolated data
+- **User Management**: Invitations, roles, and permissions
+- **Modern UI**: Built with Shadcn UI components
+
+## Setup Instructions
+
+### 1. Prerequisites
+
+- Node.js (v18+)
+- npm or yarn
+- Supabase account and project
+
+### 2. Installation
+
+1. Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/yourusername/swift-crm.git
+cd swift-crm
+npm install
+# or
+yarn install
+```
+
+2. Create a `.env.local` file in the root directory with your Supabase credentials:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+### 3. Database Setup
+
+1. Create a Supabase project and enable Email Auth and Google OAuth (if needed)
+2. Run the SQL scripts in the Supabase SQL Editor in this order:
+   - `db/init.sql` - Creates tables, relationships, and policies
+   - `db/auth_triggers.sql` - Creates triggers to sync Auth and handle user events
+
+### 4. Development
+
+Start the development server:
 
 ```bash
 npm run dev
 # or
 yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Visit http://localhost:3000 to see your application.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Authentication Flow
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **User Registration**: Users can register with email/password or Google OAuth
+2. **Email Verification**: New users must verify their email before accessing the system
+3. **Onboarding**: First-time users complete their profile information
+4. **Organization Creation**: Users create or join an organization
+5. **Dashboard Access**: After completing onboarding, users can access their organization dashboard
 
-## Learn More
+## User Roles
 
-To learn more about Next.js, take a look at the following resources:
+- **Admin**: Can manage organization settings, invite users, and assign roles
+- **Manager**: Can manage CRM data with limited administrative capabilities
+- **Member**: Can view and interact with CRM data but has limited permissions
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+swift-crm/
+├── db/                   # Database SQL scripts
+├── public/               # Static assets
+├── src/
+│   ├── app/              # Next.js App Router
+│   │   ├── (auth)/       # Authentication pages (login, register, etc.)
+│   │   ├── (dashboard)/  # Dashboard pages (protected routes)
+│   │   ├── api/          # API routes
+│   ├── components/       # Reusable UI components
+│   ├── lib/              # Utility functions and libraries
+│   ├── middleware.ts     # Authentication middleware
+```
 
-## Deploy on Vercel
+## Middleware
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The application uses Next.js middleware to:
+- Redirect unauthenticated users to the login page
+- Check email verification status and redirect if necessary
+- Check if users have completed onboarding
+- Manage session expiration and redirection
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+
+MIT
