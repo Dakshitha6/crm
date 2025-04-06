@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Combines class names with Tailwind CSS classes
@@ -151,4 +152,179 @@ export function getInitials(name: string): string {
   const names = name.trim().split(" ");
   if (names.length === 1) return names[0].substring(0, 2).toUpperCase();
   return (names[0][0] + names[names.length - 1][0]).toUpperCase();
+}
+
+/**
+ * Utility to retry async operations with exponential backoff
+ * @param operation The async operation to retry
+ * @param maxRetries Maximum number of retry attempts
+ * @param baseDelay Base delay in ms between retries
+ * @returns Result of the operation
+ */
+export async function retryOperation<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 300
+): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Skip retry for certain errors that are unlikely to be resolved with retry
+      if (
+        lastError.message.includes("permission denied") ||
+        lastError.message.includes("not authorized") ||
+        lastError.message.includes("network") === false // Skip if NOT a network error
+      ) {
+        throw lastError;
+      }
+
+      // Exponential backoff delay
+      const delay = baseDelay * Math.pow(2, attempt);
+      console.log(
+        `Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  // If we've exhausted all retries, throw the last error
+  throw lastError || new Error("Operation failed after retries");
+}
+
+/**
+ * Ensures a user record exists in the database
+ * @param supabaseClient Supabase client instance
+ * @param userId User's ID from auth
+ * @param email User's email
+ * @param isEmailVerified Whether the user's email is verified
+ * @returns true if the user was created or already exists, false if there was an error
+ */
+export async function ensureUserRecord(
+  supabaseClient: SupabaseClient,
+  userId: string,
+  email: string,
+  isEmailVerified: boolean = false
+): Promise<boolean> {
+  try {
+    // First try to get the user
+    const { data: userData, error: userError } = await supabaseClient
+      .from("users")
+      .select("id")
+      .eq("id", userId)
+      .single();
+
+    // If the user doesn't exist (PGRST116 error), create them
+    if (userError && userError.code === "PGRST116") {
+      const { error: insertError } = await supabaseClient.from("users").insert({
+        id: userId,
+        email: email,
+        email_verified: isEmailVerified,
+        is_onboarded: false,
+      });
+
+      if (insertError) {
+        console.error("Error creating user record:", insertError);
+        return false;
+      }
+
+      return true;
+    } else if (userError) {
+      console.error("Error checking for user:", userError);
+      return false;
+    }
+
+    // User already exists
+    return true;
+  } catch (error) {
+    console.error("Error in ensureUserRecord:", error);
+    return false;
+  }
+}
+
+/**
+ * Creates a default organization for a newly onboarded user if they don't have any
+ * @param supabaseClient Supabase client instance
+ * @param userId User's ID
+ * @param firstName User's first name
+ * @param lastName User's last name
+ * @returns The ID of the created organization or null if there was an error
+ */
+export async function createDefaultOrganizationIfNeeded(
+  supabaseClient: SupabaseClient,
+  userId: string,
+  firstName: string,
+  lastName: string
+): Promise<string | null> {
+  try {
+    // First check if the user already has any organizations
+    const { data: orgData, error: orgCheckError } = await supabaseClient.rpc(
+      "get_user_organizations"
+    );
+
+    if (orgCheckError) {
+      // If there's an issue with the RPC, try a direct query
+      const { data: directOrgData, error: directOrgError } =
+        await supabaseClient
+          .from("user_organizations")
+          .select("organization_id")
+          .eq("user_id", userId);
+
+      if (directOrgError) {
+        console.error("Error checking user organizations:", directOrgError);
+      } else if (directOrgData && directOrgData.length > 0) {
+        // User already has organizations, no need to create a default one
+        return directOrgData[0].organization_id;
+      }
+    } else if (orgData && orgData.length > 0) {
+      // User already has organizations from the RPC call
+      return orgData[0].id;
+    }
+
+    // User has no organizations, create a default one
+    console.log(
+      "No organizations found for user, creating default organization"
+    );
+
+    // Create the organization
+    const orgName = `${firstName}'s Organization`;
+    const { data: newOrg, error: createOrgError } = await supabaseClient
+      .from("organizations")
+      .insert({
+        name: orgName,
+        description: "Default organization",
+        created_by: userId,
+      })
+      .select("org_id")
+      .single();
+
+    if (createOrgError) {
+      console.error("Error creating default organization:", createOrgError);
+      return null;
+    }
+
+    // Link the user to the organization as an admin
+    const { error: linkError } = await supabaseClient
+      .from("user_organizations")
+      .insert({
+        user_id: userId,
+        organization_id: newOrg.org_id,
+        role: "admin",
+      });
+
+    if (linkError) {
+      console.error("Error linking user to organization:", linkError);
+      return null;
+    }
+
+    console.log("Successfully created default organization:", newOrg.org_id);
+    return newOrg.org_id;
+  } catch (error) {
+    console.error("Error in createDefaultOrganizationIfNeeded:", error);
+    return null;
+  }
 }

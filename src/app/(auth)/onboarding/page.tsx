@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
-// UI Components
 import {
   Card,
   CardContent,
@@ -14,9 +13,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -25,74 +24,84 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// Common timezones list
-const TIMEZONES = [
-  { value: "UTC", label: "UTC (Coordinated Universal Time)" },
-  { value: "America/New_York", label: "Eastern Time (ET)" },
-  { value: "America/Chicago", label: "Central Time (CT)" },
-  { value: "America/Denver", label: "Mountain Time (MT)" },
-  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
-  { value: "Europe/London", label: "Greenwich Mean Time (GMT)" },
-  { value: "Europe/Paris", label: "Central European Time (CET)" },
-  { value: "Asia/Tokyo", label: "Japan Standard Time (JST)" },
-  { value: "Asia/Shanghai", label: "China Standard Time (CST)" },
-  { value: "Australia/Sydney", label: "Australian Eastern Time (AET)" },
-];
-
 export default function OnboardingPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    first_name: "",
+    last_name: "",
+    phone_number: "",
+    job_title: "",
+    timezone: "",
+  });
 
-  // Form state
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
-  const [timezone, setTimezone] = useState("UTC");
+  useEffect(() => {
+    const checkSession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.user) {
+        router.push("/auth/login");
+        return;
+      }
 
-  // Handle form submission
+      if (!session.user.email_confirmed_at) {
+        router.push("/auth/verify-email");
+        return;
+      }
+
+      // Check if already onboarded
+      const { data: userData } = await supabase
+        .from("users")
+        .select("is_onboarded")
+        .eq("id", session.user.id)
+        .single();
+
+      if (userData?.is_onboarded) {
+        router.push("/dashboard/orgs");
+      }
+    };
+
+    checkSession();
+  }, [router]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!firstName || !lastName) {
-      toast.error("First name and last name are required");
-      return;
-    }
-
-    setLoading(true);
-
     try {
+      setLoading(true);
+
       // Get current user
       const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        throw new Error(userError?.message || "No authenticated user found");
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.user) {
+        throw new Error("No authenticated user found");
       }
 
-      // Update user profile in the users table
+      // Validate required fields
+      if (!formData.first_name || !formData.last_name) {
+        throw new Error("First name and last name are required");
+      }
+
+      // Update user profile
       const { error: updateError } = await supabase
         .from("users")
         .update({
-          first_name: firstName,
-          last_name: lastName,
-          phone_number: phoneNumber || null,
-          job_title: jobTitle || null,
-          timezone: timezone,
+          ...formData,
           is_onboarded: true,
+          updated_at: new Date().toISOString(),
         })
-        .eq("id", user.id);
+        .eq("id", session.user.id);
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
       toast.success("Profile updated successfully!");
 
-      // Redirect to organizations page
-      router.push("/dashboard/orgs");
+      // Redirect to organization creation
+      setTimeout(() => {
+        router.push("/dashboard/orgs/new");
+      }, 500);
     } catch (error: any) {
       console.error("Onboarding error:", error);
       toast.error(error.message || "Failed to update profile");
@@ -101,84 +110,100 @@ export default function OnboardingPage() {
     }
   };
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const timezones = [
+    "UTC",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "Europe/London",
+    "Europe/Paris",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Australia/Sydney",
+  ];
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-xl">Complete Your Profile</CardTitle>
-          <CardDescription>
-            Please provide some additional information to get started.
-          </CardDescription>
-        </CardHeader>
-
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Complete your profile</CardTitle>
+        <CardDescription>
+          Tell us a bit about yourself to get started
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="firstName">First Name *</Label>
+              <Label htmlFor="first_name">First Name *</Label>
               <Input
-                id="firstName"
-                placeholder="Enter your first name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
+                id="first_name"
+                name="first_name"
+                value={formData.first_name}
+                onChange={handleInputChange}
                 required
               />
             </div>
-
             <div className="space-y-2">
-              <Label htmlFor="lastName">Last Name *</Label>
+              <Label htmlFor="last_name">Last Name *</Label>
               <Input
-                id="lastName"
-                placeholder="Enter your last name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
+                id="last_name"
+                name="last_name"
+                value={formData.last_name}
+                onChange={handleInputChange}
                 required
               />
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="phoneNumber">Phone Number (optional)</Label>
-              <Input
-                id="phoneNumber"
-                placeholder="Enter your phone number"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="jobTitle">Job Title (optional)</Label>
-              <Input
-                id="jobTitle"
-                placeholder="Enter your job title"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="timezone">Timezone</Label>
-              <Select value={timezone} onValueChange={setTimezone}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select your timezone" />
-                </SelectTrigger>
-                <SelectContent>
-                  {TIMEZONES.map((tz) => (
-                    <SelectItem key={tz.value} value={tz.value}>
-                      {tz.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-
-          <CardFooter>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Saving..." : "Complete Profile"}
-            </Button>
-          </CardFooter>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="phone_number">Phone Number</Label>
+            <Input
+              id="phone_number"
+              name="phone_number"
+              type="tel"
+              value={formData.phone_number}
+              onChange={handleInputChange}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="job_title">Job Title</Label>
+            <Input
+              id="job_title"
+              name="job_title"
+              value={formData.job_title}
+              onChange={handleInputChange}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="timezone">Timezone</Label>
+            <Select
+              value={formData.timezone}
+              onValueChange={(value) =>
+                setFormData((prev) => ({ ...prev, timezone: value }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select your timezone" />
+              </SelectTrigger>
+              <SelectContent>
+                {timezones.map((tz) => (
+                  <SelectItem key={tz} value={tz}>
+                    {tz}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? "Saving..." : "Continue"}
+          </Button>
         </form>
-      </Card>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

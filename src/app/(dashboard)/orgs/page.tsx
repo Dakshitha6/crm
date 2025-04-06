@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import { formatDate } from "@/lib/utils";
+import { Plus, MoreHorizontal } from "lucide-react";
 
 // UI Components
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -16,184 +16,229 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Building2, Settings, Plus, Users, ArrowUpRight } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-// Types
 interface Organization {
-  org_id: string;
+  id: string;
   name: string;
+  description: string | null;
+  logo_url: string | null;
   created_at: string;
-  role: string;
-  memberCount: number;
+  user_role: string;
 }
 
 export default function OrganizationsPage() {
   const router = useRouter();
-
-  // State
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
 
-  // Fetch user's organizations
+  // Verify user session on mount
   useEffect(() => {
-    const fetchOrganizations = async () => {
+    const checkSession = async () => {
       try {
-        setLoading(true);
+        // Direct session check from Supabase
+        const { data, error } = await supabase.auth.getSession();
 
-        // Get the current user's organizations with their role
-        const { data: userOrgs, error: userOrgsError } = await supabase.from(
-          "user_organizations"
-        ).select(`
-            organization_id,
-            role,
-            organizations (
-              org_id,
-              name,
-              created_at
-            )
-          `);
+        if (error) {
+          console.error("Session error:", error);
+          toast.error("Session error. Please log in again.");
+          router.push("/auth/login");
+          return;
+        }
 
-        if (userOrgsError) throw userOrgsError;
+        if (!data?.session?.user) {
+          console.log("No active session found in dashboard");
+          toast.error("Your session has expired. Please log in again.");
+          router.push("/auth/login");
+          return;
+        }
 
-        // Get member count for each organization
-        const orgsWithMemberCount = await Promise.all(
-          userOrgs.map(async (userOrg) => {
-            const { count, error: countError } = await supabase
-              .from("user_organizations")
-              .select("*", { count: "exact", head: true })
-              .eq("organization_id", userOrg.organization_id);
+        setUser(data.session.user);
 
-            if (countError) {
-              console.error("Error fetching member count:", countError);
-              return {
-                org_id: userOrg.organizations.org_id,
-                name: userOrg.organizations.name,
-                created_at: userOrg.organizations.created_at,
-                role: userOrg.role,
-                memberCount: 0, // Default if count fails
-              };
+        // Verify the user is properly onboarded
+        try {
+          const { data: userData, error: userError } = await supabase
+            .from("users")
+            .select("is_onboarded")
+            .eq("id", data.session.user.id)
+            .single();
+
+          if (userError) {
+            if (userError.code === "PGRST116") {
+              console.error("User record not found for authenticated user");
+              toast.error(
+                "Your profile is incomplete. Redirecting to onboarding."
+              );
+              router.push("/auth/onboarding");
+              return;
             }
+            throw userError;
+          }
 
-            return {
-              org_id: userOrg.organizations.org_id,
-              name: userOrg.organizations.name,
-              created_at: userOrg.organizations.created_at,
-              role: userOrg.role,
-              memberCount: count || 0,
-            };
-          })
-        );
+          if (!userData?.is_onboarded) {
+            console.log("User not onboarded, redirecting to onboarding");
+            toast.error("Please complete your profile before continuing.");
+            router.push("/auth/onboarding");
+            return;
+          }
 
-        setOrganizations(orgsWithMemberCount);
-      } catch (error: any) {
-        console.error("Error fetching organizations:", error);
-        toast.error("Failed to load your organizations");
-      } finally {
-        setLoading(false);
+          // User is authenticated and onboarded, proceed to load organizations
+          fetchOrganizations();
+        } catch (error) {
+          console.error("Error verifying user status:", error);
+          toast.error("Error verifying your account status.");
+          router.push("/auth/login");
+        }
+      } catch (error) {
+        console.error("Session check error:", error);
+        toast.error("Error verifying your session.");
+        router.push("/auth/login");
       }
     };
 
-    fetchOrganizations();
-  }, []);
+    checkSession();
+  }, [router]);
 
-  // Render role badge with appropriate color
-  const getRoleBadge = (role: string) => {
-    const styles = {
-      admin: "bg-blue-50 text-blue-700 border-blue-200",
-      manager: "bg-green-50 text-green-700 border-green-200",
-      member: "bg-gray-50 text-gray-700 border-gray-200",
-    };
+  const fetchOrganizations = async () => {
+    try {
+      setLoading(true);
 
-    const style = styles[role as keyof typeof styles] || styles.member;
+      const { data, error } = await supabase.rpc("get_user_organizations");
 
-    return (
-      <span
-        className={`px-2 py-1 text-xs font-medium rounded-full border ${style}`}
-      >
-        {role}
-      </span>
-    );
+      if (error) {
+        throw error;
+      }
+
+      setOrganizations(data || []);
+    } catch (error: any) {
+      console.error("Error fetching organizations:", error);
+      toast.error("Failed to load organizations");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (loading) {
-    return (
-      <div className="container py-10">
-        <h1 className="text-3xl font-bold mb-6">Your Organizations</h1>
-        <div className="flex justify-center items-center h-60">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+  const handleCreateOrg = () => {
+    router.push("/orgs/create");
+  };
+
+  const handleOrgClick = (orgId: string) => {
+    router.push(`/orgs/${orgId}`);
+  };
+
+  const renderEmptyState = () => (
+    <Card className="border-dashed border-2">
+      <CardContent className="pt-6 pb-10 flex flex-col items-center justify-center text-center">
+        <div className="rounded-full bg-blue-50 p-3 mb-4">
+          <div className="rounded-full bg-blue-100 p-2">
+            <Plus className="h-5 w-5 text-blue-600" />
+          </div>
         </div>
-      </div>
-    );
-  }
+        <h3 className="font-medium text-lg mb-1">No organizations yet</h3>
+        <p className="text-sm text-gray-500 mb-4 max-w-md">
+          Create your first organization to start managing your team, projects,
+          and resources
+        </p>
+        <Button onClick={handleCreateOrg}>Create Organization</Button>
+      </CardContent>
+    </Card>
+  );
+
+  const renderOrganizationCards = () => (
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {organizations.map((org) => (
+        <Card key={org.id} className="hover:shadow-md transition-shadow">
+          <CardHeader className="pb-2">
+            <div className="flex justify-between items-start">
+              <div className="space-y-1">
+                <CardTitle>{org.name}</CardTitle>
+                <CardDescription>
+                  {org.description || "No description"}
+                </CardDescription>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => handleOrgClick(org.id)}>
+                    View Details
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>Invite Members</DropdownMenuItem>
+                  <DropdownMenuItem>Settings</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-2 pb-6">
+            <div className="text-sm text-gray-500 mb-2">
+              <span className="font-medium">Your role:</span> {org.user_role}
+            </div>
+          </CardContent>
+          <CardFooter className="pt-2 border-t bg-gray-50">
+            <Button
+              variant="ghost"
+              className="w-full text-blue-600"
+              onClick={() => handleOrgClick(org.id)}
+            >
+              View Organization
+            </Button>
+          </CardFooter>
+        </Card>
+      ))}
+
+      {/* Create new organization card */}
+      <Card className="border-dashed border-2 hover:bg-gray-50 transition-colors">
+        <CardContent
+          className="pt-6 pb-6 h-full flex flex-col items-center justify-center text-center cursor-pointer"
+          onClick={handleCreateOrg}
+        >
+          <div className="rounded-full bg-blue-50 p-3 mb-4">
+            <Plus className="h-5 w-5 text-blue-600" />
+          </div>
+          <h3 className="font-medium">Create New Organization</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Add a new team or company
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
 
   return (
-    <div className="container py-10">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-        <h1 className="text-3xl font-bold">Your Organizations</h1>
-        <Button
-          onClick={() => router.push("/orgs/new")}
-          className="mt-4 md:mt-0"
-        >
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">Organizations</h1>
+          <p className="text-gray-500">Manage your companies and teams</p>
+        </div>
+        <Button onClick={handleCreateOrg}>
           <Plus className="h-4 w-4 mr-2" />
           Create Organization
         </Button>
       </div>
 
-      {organizations.length === 0 ? (
-        <Card className="text-center p-10">
-          <CardContent className="pt-10 pb-10">
-            <Building2 className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-xl font-medium mb-2">No Organizations Found</h3>
-            <p className="text-gray-500 mb-6">
-              You don't have any organizations yet. Create your first
-              organization to get started.
-            </p>
-            <Button onClick={() => router.push("/orgs/new")}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Organization
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {organizations.map((org) => (
-            <Card key={org.org_id} className="overflow-hidden">
-              <CardHeader className="pb-4">
-                <CardTitle className="font-bold">{org.name}</CardTitle>
-                <CardDescription>
-                  Created {formatDate(org.created_at)}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex justify-between items-center mb-4">
-                  {getRoleBadge(org.role)}
-                  <div className="flex items-center text-sm text-gray-500">
-                    <Users className="h-4 w-4 mr-1" />
-                    <span>
-                      {org.memberCount} member{org.memberCount !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="bg-gray-50 border-t flex justify-between">
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/orgs/${org.org_id}/settings`}>
-                    <Settings className="h-4 w-4 mr-2" />
-                    Settings
-                  </Link>
-                </Button>
-                <Button size="sm" asChild>
-                  <Link href={`/orgs/${org.org_id}/dashboard`}>
-                    <ArrowUpRight className="h-4 w-4 mr-2" />
-                    Open
-                  </Link>
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
-        </div>
-      )}
+      <div>
+        {loading ? (
+          <div className="text-center py-10">Loading organizations...</div>
+        ) : organizations.length === 0 ? (
+          renderEmptyState()
+        ) : (
+          renderOrganizationCards()
+        )}
+      </div>
     </div>
   );
 }

@@ -215,7 +215,56 @@ export default function OrganizationSettingsPage() {
     fetchOrganizationData();
   }, [orgId]);
 
-  // Send invitation
+  // Check for expired invitations when loading and displaying
+  useEffect(() => {
+    // Check for and handle expired invitations
+    const handleExpiredInvitations = async () => {
+      if (!invitations.length) return;
+
+      const now = new Date();
+      const expiredInvitations = invitations.filter((inv) => {
+        return new Date(inv.expires_at) < now && inv.status === "pending";
+      });
+
+      // Auto-reject expired invitations
+      if (expiredInvitations.length > 0) {
+        try {
+          // Update all expired invitations to 'expired' status
+          const { error } = await supabase
+            .from("invitations")
+            .update({ status: "expired" })
+            .in(
+              "id",
+              expiredInvitations.map((inv) => inv.id)
+            );
+
+          if (error) throw error;
+
+          // Update the invitations list in state
+          setInvitations(
+            invitations.map((inv) =>
+              expiredInvitations.some((expired) => expired.id === inv.id)
+                ? { ...inv, status: "expired" }
+                : inv
+            )
+          );
+
+          // Only show notification if there are expired invitations
+          if (expiredInvitations.length > 0) {
+            toast.info(
+              `${expiredInvitations.length} invitation(s) have expired and been automatically marked as expired.`
+            );
+          }
+        } catch (error: any) {
+          console.error("Error handling expired invitations:", error);
+        }
+      }
+    };
+
+    handleExpiredInvitations();
+  }, [invitations, supabase]);
+
+  // Send invitation with improved error handling
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -239,7 +288,7 @@ export default function OrganizationSettingsPage() {
 
       // Check if invitation already exists
       const invitationExists = invitations.some(
-        (inv) => inv.email === inviteEmail
+        (inv) => inv.email === inviteEmail && inv.status === "pending"
       );
 
       if (invitationExists) {
@@ -252,6 +301,10 @@ export default function OrganizationSettingsPage() {
         Math.random().toString(36).substring(2, 15) +
         Math.random().toString(36).substring(2, 15);
 
+      // Set expiration date (7 days from now)
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
       // Create invitation
       const { data: invitation, error } = await supabase
         .from("invitations")
@@ -262,6 +315,7 @@ export default function OrganizationSettingsPage() {
           role: inviteRole,
           status: "pending",
           token,
+          expires_at: expiresAt.toISOString(),
         })
         .select()
         .single();
@@ -280,7 +334,20 @@ export default function OrganizationSettingsPage() {
       setInviteRole("member");
     } catch (error: any) {
       console.error("Error sending invitation:", error);
-      toast.error("Failed to send invitation");
+
+      if (
+        error.message.includes("duplicate key") ||
+        error.message.includes("unique constraint")
+      ) {
+        toast.error("An invitation for this email already exists");
+      } else if (
+        error.message.includes("permission denied") ||
+        error.message.includes("not authorized")
+      ) {
+        toast.error("You don't have permission to send invitations");
+      } else {
+        toast.error("Failed to send invitation. Please try again.");
+      }
     } finally {
       setInvitingUser(false);
     }

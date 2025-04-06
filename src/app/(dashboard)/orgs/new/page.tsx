@@ -144,7 +144,7 @@ export default function NewOrganizationPage() {
 
       toast.success("Organization created successfully!");
 
-      // Redirect to organization dashboard
+      // Redirect to the specific organization's dashboard
       router.push(`/orgs/${orgData.org_id}/dashboard`);
     } catch (error: any) {
       console.error("Error creating organization:", error);

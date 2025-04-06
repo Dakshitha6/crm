@@ -1,39 +1,112 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { useAuthStore } from "@/state/auth";
+import { toast } from "sonner";
 
-interface AuthProviderProps {
-  children: React.ReactNode;
+interface AuthContextType {
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  userId: string | null;
 }
 
-export default function AuthProvider({ children }: AuthProviderProps) {
-  const { checkSession } = useAuthStore();
+const AuthContext = createContext<AuthContextType>({
+  isAuthenticated: false,
+  isLoading: true,
+  userId: null,
+});
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Initial session check
-    checkSession();
+    const checkAuth = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-    // Set up auth state listener
+        if (!session) {
+          // Only redirect to login if we're not already on an auth page
+          if (
+            !pathname.startsWith("/login") &&
+            !pathname.startsWith("/register")
+          ) {
+            router.push("/login");
+          }
+          setIsAuthenticated(false);
+          setUserId(null);
+          return;
+        }
+
+        setIsAuthenticated(true);
+        setUserId(session.user.id);
+
+        // Check if email is verified
+        if (!session.user.email_confirmed_at) {
+          if (pathname !== "/verify-email") {
+            router.push("/verify-email");
+          }
+          return;
+        }
+
+        // Check if user is onboarded
+        const { data: userData } = await supabase
+          .from("users")
+          .select("is_onboarded")
+          .eq("id", session.user.id)
+          .single();
+
+        if (!userData?.is_onboarded) {
+          if (pathname !== "/onboarding") {
+            router.push("/onboarding");
+          }
+          return;
+        }
+
+        // If we're on an auth page but we're already authenticated, redirect to dashboard
+        if (pathname.startsWith("/login") || pathname.startsWith("/register")) {
+          router.push("/dashboard/orgs");
+        }
+      } catch (error) {
+        console.error("Auth check error:", error);
+        toast.error("Error checking authentication status");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkAuth();
+
+    // Set up auth state change listener
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT") {
-        router.push("/auth/login");
+        setIsAuthenticated(false);
+        setUserId(null);
+        router.push("/login");
       } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        // Refresh the auth store
-        checkSession();
+        setIsAuthenticated(true);
+        setUserId(session?.user.id || null);
       }
     });
 
-    // Cleanup subscription on unmount
     return () => {
       subscription.unsubscribe();
     };
-  }, [checkSession, router]);
+  }, [router, pathname]);
 
-  return <>{children}</>;
+  return (
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, userId }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
+
+export const useAuth = () => useContext(AuthContext);
